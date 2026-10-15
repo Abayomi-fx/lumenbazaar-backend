@@ -1,4 +1,9 @@
-import { type PaymentAttempt, type Receipt, type Settlement } from "@lumenbazaar/shared";
+import {
+  type PaymentAttempt,
+  type Receipt,
+  type ReceiptStreamChange,
+  type Settlement
+} from "@lumenbazaar/shared";
 
 import { type CreateSettlementInput } from "./settlementStore.js";
 
@@ -21,6 +26,21 @@ export type FailedPaymentStateInput = {
   failureReason: string;
 };
 
+export type ReceiptStatusChangeListener = (change: ReceiptStreamChange) => void;
+
+export function receiptStatusChange(receipt: Receipt): ReceiptStreamChange {
+  return {
+    receiptId: receipt.id,
+    status: receipt.status,
+    network: receipt.network,
+    sellerId: receipt.sellerId,
+    resourceId: receipt.resourceId,
+    failureCode: receipt.failureCode,
+    settledAt: receipt.settledAt,
+    occurredAt: receipt.updatedAt
+  };
+}
+
 export type PaymentStatePersistence = {
   recordConfirmed(input: ConfirmedPaymentStateInput): Promise<{
     attempt: PaymentAttempt;
@@ -31,4 +51,5 @@ export type PaymentStatePersistence = {
     attempt: PaymentAttempt;
     settlement: Settlement;
   }>;
+  subscribeToReceiptStatusChanges(listener: ReceiptStatusChangeListener): () => void;
 };

@@ -7,35 +7,39 @@ API version: 0.1.0
 
 ## Endpoints
 
-| Method | Path                                      | Summary                                                      |
-| ------ | ----------------------------------------- | ------------------------------------------------------------ |
-| GET    | `/health`                                 | Return API process liveness.                                 |
-| GET    | `/ready`                                  | Return dependency readiness and usable payment capabilities. |
-| GET    | `/version`                                | Return backend version and environment.                      |
-| GET    | `/v1/networks`                            | List configured Stellar networks and assets.                 |
-| GET    | `/v1/supported`                           | List supported x402 payment schemes.                         |
-| POST   | `/v1/verify`                              | Verify an exact Stellar x402 payment payload.                |
-| POST   | `/v1/settle`                              | Settle a previously verified exact Stellar x402 payment.     |
-| GET    | `/v1/receipts/{receiptId}`                | Fetch a settlement receipt.                                  |
-| POST   | `/v1/payment-sessions`                    | Create a capped Stellar upto payment session.                |
-| GET    | `/v1/payment-sessions/{sessionId}`        | Fetch a capped payment session.                              |
-| POST   | `/v1/payment-sessions/{sessionId}/settle` | Settle a capped payment session up to its authorized amount. |
-| POST   | `/v1/sellers`                             | Create a seller profile.                                     |
-| GET    | `/v1/sellers/{sellerId}`                  | Fetch a seller profile.                                      |
-| POST   | `/v1/sellers/{sellerId}/verify-domain`    | Create or complete a seller domain verification challenge.   |
-| GET    | `/v1/resources`                           | List catalog resources.                                      |
-| POST   | `/v1/resources`                           | Create a paid resource owned by a seller.                    |
-| GET    | `/v1/resources/{id}`                      | Fetch a paid resource by ID.                                 |
-| PATCH  | `/v1/resources/{id}`                      | Update mutable paid resource fields.                         |
-| DELETE | `/v1/resources/{id}`                      | Deactivate a paid resource.                                  |
-| GET    | `/v1/sellers/{sellerId}/resources`        | List resources owned by a seller.                            |
-| GET    | `/v1/discovery/resources`                 | Browse discoverable paid resources.                          |
-| GET    | `/v1/discovery/search`                    | Search paid resources by query and filters.                  |
-| POST   | `/v1/discovery/validate`                  | Validate Bazaar discovery metadata without cataloging it.    |
-| POST   | `/v1/discovery/catalog`                   | Catalog valid Bazaar discovery metadata.                     |
-| POST   | `/v1/conformance/runs`                    | Run backend x402 conformance checks and persist the result.  |
-| GET    | `/v1/conformance/runs`                    | List persisted conformance runs.                             |
-| GET    | `/v1/conformance/runs/{runId}`            | Fetch a persisted conformance run.                           |
+| Method | Path                                      | Summary                                                                           |
+| ------ | ----------------------------------------- | --------------------------------------------------------------------------------- |
+| GET    | `/health`                                 | Return API process liveness.                                                      |
+| GET    | `/ready`                                  | Return dependency readiness and usable payment capabilities.                      |
+| GET    | `/version`                                | Return backend version and environment.                                           |
+| GET    | `/v1/networks`                            | List configured Stellar networks and assets.                                      |
+| GET    | `/v1/supported`                           | List supported x402 payment schemes.                                              |
+| POST   | `/v1/verify`                              | Verify an exact Stellar x402 payment payload.                                     |
+| POST   | `/v1/settle`                              | Settle a previously verified exact Stellar x402 payment.                          |
+| GET    | `/v1/receipts/{receiptId}`                | Fetch a settlement receipt.                                                       |
+| POST   | `/v1/receipts/{receiptId}/stream-access`  | Mint a short-lived grant for a receipt status event stream.                       |
+| GET    | `/v1/receipts/{receiptId}/stream`         | Stream authorized receipt status updates until the receipt reaches a final state. |
+| POST   | `/v1/payment-sessions`                    | Create a capped Stellar upto payment session.                                     |
+| GET    | `/v1/payment-sessions/{sessionId}`        | Fetch a capped payment session.                                                   |
+| POST   | `/v1/payment-sessions/{sessionId}/settle` | Settle a capped payment session up to its authorized amount.                      |
+| POST   | `/v1/sellers`                             | Create a seller profile.                                                          |
+| GET    | `/v1/sellers/{sellerId}`                  | Fetch a seller profile.                                                           |
+| POST   | `/v1/sellers/{sellerId}/stream-access`    | Mint a short-lived seller stream grant from a wallet signature.                   |
+| GET    | `/v1/sellers/{sellerId}/receipts/stream`  | Stream authorized receipt status updates for one seller.                          |
+| POST   | `/v1/sellers/{sellerId}/verify-domain`    | Create or complete a seller domain verification challenge.                        |
+| GET    | `/v1/resources`                           | List catalog resources.                                                           |
+| POST   | `/v1/resources`                           | Create a paid resource owned by a seller.                                         |
+| GET    | `/v1/resources/{id}`                      | Fetch a paid resource by ID.                                                      |
+| PATCH  | `/v1/resources/{id}`                      | Update mutable paid resource fields.                                              |
+| DELETE | `/v1/resources/{id}`                      | Deactivate a paid resource.                                                       |
+| GET    | `/v1/sellers/{sellerId}/resources`        | List resources owned by a seller.                                                 |
+| GET    | `/v1/discovery/resources`                 | Browse discoverable paid resources.                                               |
+| GET    | `/v1/discovery/search`                    | Search paid resources by query and filters.                                       |
+| POST   | `/v1/discovery/validate`                  | Validate Bazaar discovery metadata without cataloging it.                         |
+| POST   | `/v1/discovery/catalog`                   | Catalog valid Bazaar discovery metadata.                                          |
+| POST   | `/v1/conformance/runs`                    | Run backend x402 conformance checks and persist the result.                       |
+| GET    | `/v1/conformance/runs`                    | List persisted conformance runs.                                                  |
+| GET    | `/v1/conformance/runs/{runId}`            | Fetch a persisted conformance run.                                                |
 
 ## Docs Repo Consumption
 

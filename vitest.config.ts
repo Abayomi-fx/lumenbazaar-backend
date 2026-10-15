@@ -10,6 +10,7 @@ export default defineConfig({
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/lumenbazaar_test",
       DEFAULT_ASSET_CODE: "USDC",
       ENABLE_UPTO_SCHEME: "false",
+      EVENT_STREAM_SIGNING_SECRET: "lumenbazaar-test-event-stream-signing-secret",
       FACILITATOR_ACCOUNT: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
       LUMEN_ENV: "local",
       REDIS_URL: "redis://localhost:6379",

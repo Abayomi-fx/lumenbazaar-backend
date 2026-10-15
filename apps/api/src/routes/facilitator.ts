@@ -13,6 +13,7 @@ import {
 import { parseParams } from "../http/validation.js";
 import { type MetricsService } from "../services/metrics.js";
 import { type ReadinessService } from "../services/readiness.js";
+import { type ReceiptStatusStreamService } from "../services/receiptStatusStreams.js";
 
 export type FacilitatorRouteOptions = {
   config: AppConfig;
@@ -21,6 +22,7 @@ export type FacilitatorRouteOptions = {
   settlementService?: SettlementService;
   receiptService?: ReceiptService;
   metrics?: MetricsService;
+  receiptStreams?: ReceiptStatusStreamService;
 };
 
 export function registerFacilitatorRoutes(app: FastifyInstance, options: FacilitatorRouteOptions) {
@@ -117,6 +119,7 @@ export function registerFacilitatorRoutes(app: FastifyInstance, options: Facilit
     try {
       const result = await settlementService.settle(request.body);
       reply.header("x-correlation-id", result.correlationId);
+      await options.receiptStreams?.notifyReceipt(result.receiptId);
       options.metrics?.recordSettlementResult(result.network, "settled");
       options.metrics?.observeFinality(result.network, Date.now() - startedAt, "confirmed");
       return toLumenSettleResponse(result);

@@ -29,6 +29,12 @@ import { registerMetadataRoutes } from "./routes/metadata.js";
 import { registerPaymentSessionRoutes } from "./routes/paymentSessions.js";
 import { registerResourceRoutes } from "./routes/resources.js";
 import { registerSellerRoutes } from "./routes/sellers.js";
+import { registerStreamRoutes } from "./routes/streams.js";
+import {
+  ReceiptStatusStreamService,
+  type EventStreamTuning
+} from "./services/receiptStatusStreams.js";
+import { StreamAccessService } from "./services/streamAccess.js";
 import { createRuntimeAuditLog, type AuditLogService } from "./services/audit.js";
 import { createCatalogPersistence } from "./services/catalogPersistence.js";
 import { CatalogService } from "./services/cataloging.js";
@@ -68,6 +74,9 @@ export type BuildApiAppOptions = {
   paymentCapabilities?: PaymentCapabilities;
   readinessService?: ReadinessService;
   signerProvider?: FacilitatorSignerProvider;
+  streamAccessService?: StreamAccessService;
+  receiptStatusStreamService?: ReceiptStatusStreamService;
+  eventStreamTuning?: EventStreamTuning;
 };
 
 export function buildApiApp(options: BuildApiAppOptions = {}) {
@@ -208,13 +217,33 @@ export function buildApiApp(options: BuildApiAppOptions = {}) {
       }
     );
 
+  const streamAccessService =
+    options.streamAccessService ??
+    new StreamAccessService({ signingSecret: config.eventStreams.signingSecret });
+  const receiptStatusStreams =
+    options.receiptStatusStreamService ??
+    new ReceiptStatusStreamService({
+      receiptService: routeReceiptService,
+      streamAccess: streamAccessService,
+      ...(options.eventStreamTuning ?? {})
+    });
+  app.addHook("onClose", async () => receiptStatusStreams.close());
+  const unsubscribeReceiptStatusChanges =
+    paymentPersistence.statePersistence?.subscribeToReceiptStatusChanges((change) =>
+      receiptStatusStreams.publish(change)
+    );
+  if (unsubscribeReceiptStatusChanges !== undefined) {
+    app.addHook("onClose", async () => unsubscribeReceiptStatusChanges());
+  }
+
   registerFacilitatorRoutes(app, {
     config,
     verificationService,
     settlementService,
     receiptService: routeReceiptService,
     metrics: metricsService,
-    readiness: readinessService
+    readiness: readinessService,
+    receiptStreams: receiptStatusStreams
   });
   registerPaymentSessionRoutes(app, { paymentSessionService });
   registerSellerRoutes(app, { sellerService });
@@ -227,6 +256,12 @@ export function buildApiApp(options: BuildApiAppOptions = {}) {
   });
   registerConformanceRoutes(app, {
     conformanceService
+  });
+  registerStreamRoutes(app, {
+    receiptService: routeReceiptService,
+    sellerService,
+    streamAccess: receiptStatusStreams.streamAccess,
+    streams: receiptStatusStreams
   });
 
   return app;

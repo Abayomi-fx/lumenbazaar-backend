@@ -77,6 +77,7 @@ const envSchema = z.object({
     .enum(["stellar:testnet", "stellar:pubnet"])
     .default("stellar:testnet"),
   FACILITATOR_SIGNING_KEY_VERSION: optionalNonEmptyStringEnv,
+  EVENT_STREAM_SIGNING_SECRET: optionalNonEmptyStringEnv,
   STELLAR_MAX_TRANSACTION_FEE_STROOPS: z.coerce.number().int().positive().default(50_000),
   STELLAR_INCLUSION_FEE_STROOPS: z.coerce.number().int().positive().default(100)
 });
@@ -107,6 +108,9 @@ export type AppConfig = {
   settlement: {
     maxTransactionFeeStroops: number;
     inclusionFeeStroops: number;
+  };
+  eventStreams: {
+    signingSecret: string | undefined;
   };
   features: {
     uptoScheme: boolean;
@@ -195,6 +199,9 @@ export function loadConfig(
     settlement: {
       maxTransactionFeeStroops: env.STELLAR_MAX_TRANSACTION_FEE_STROOPS,
       inclusionFeeStroops: env.STELLAR_INCLUSION_FEE_STROOPS
+    },
+    eventStreams: {
+      signingSecret: env.EVENT_STREAM_SIGNING_SECRET
     },
     features: {
       uptoScheme: env.ENABLE_UPTO_SCHEME

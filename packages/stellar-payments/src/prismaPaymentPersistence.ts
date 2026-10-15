@@ -21,7 +21,9 @@ import {
 import {
   type ConfirmedPaymentStateInput,
   type FailedPaymentStateInput,
-  type PaymentStatePersistence
+  type PaymentStatePersistence,
+  receiptStatusChange,
+  type ReceiptStatusChangeListener
 } from "./paymentStatePersistence.js";
 import { receiptEvidenceHash } from "./receipt.js";
 import { type CreateReceiptInput, type ReceiptStore } from "./receiptStore.js";
@@ -143,14 +145,43 @@ export class PrismaReceiptStore implements ReceiptStore {
     const row = await this.db.receipt.findUnique({ where: { paymentAttemptId } });
     return row === null ? undefined : mapReceipt(row);
   }
+
+  async listReceiptsBySeller(sellerId: string, limit = 100) {
+    const rows = await this.db.receipt.findMany({
+      where: { sellerId },
+      orderBy: { createdAt: "desc" },
+      take: limit
+    });
+    return rows.map(mapReceipt);
+  }
 }
 
 export class PrismaPaymentStatePersistence implements PaymentStatePersistence {
+  private readonly receiptStatusListeners = new Set<ReceiptStatusChangeListener>();
+
   constructor(private readonly client: PrismaClient) {}
+
+  subscribeToReceiptStatusChanges(listener: ReceiptStatusChangeListener) {
+    this.receiptStatusListeners.add(listener);
+    return () => {
+      this.receiptStatusListeners.delete(listener);
+    };
+  }
+
+  private notifyReceiptStatusChange(receipt: Receipt) {
+    const change = receiptStatusChange(receipt);
+    for (const listener of this.receiptStatusListeners) {
+      try {
+        listener(change);
+      } catch {
+        // Receipt status listeners must never fail settlement persistence.
+      }
+    }
+  }
 
   async recordConfirmed(input: ConfirmedPaymentStateInput) {
     try {
-      return await this.client.$transaction(async (tx) => {
+      const result = await this.client.$transaction(async (tx) => {
         const settlement = mapSettlement(
           await tx.settlement.create({
             data: settlementData({
@@ -192,6 +223,8 @@ export class PrismaPaymentStatePersistence implements PaymentStatePersistence {
         );
         return { attempt, settlement, receipt };
       });
+      this.notifyReceiptStatusChange(result.receipt);
+      return result;
     } catch (error) {
       throwReplayOr(error);
     }
