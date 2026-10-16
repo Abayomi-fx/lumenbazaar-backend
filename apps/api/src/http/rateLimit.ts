@@ -16,29 +16,46 @@ export function registerRateLimitHook(app: FastifyInstance, options: RateLimitHo
       return;
     }
 
-    const result = await options.rateLimitService.consume({
-      key: rateLimitKey(request),
-      route: `${request.method} ${requestPath(request.url)}`,
-      scope
-    });
+    try {
+      const result = await options.rateLimitService.consume({
+        key: rateLimitKey(request),
+        route: `${request.method} ${requestPath(request.url)}`,
+        scope
+      });
 
-    reply.header("x-ratelimit-limit", String(result.limit));
-    reply.header("x-ratelimit-remaining", String(result.remaining));
-    reply.header("x-ratelimit-reset", result.resetAt.toISOString());
+      reply.header("x-ratelimit-limit", String(result.limit));
+      reply.header("x-ratelimit-remaining", String(result.remaining));
+      reply.header("x-ratelimit-reset", result.resetAt.toISOString());
 
-    if (!result.allowed) {
-      return reply.status(429).send(
-        failure(
-          {
-            code: "RATE_LIMITED",
-            message: "Rate limit exceeded.",
-            details: {
-              scope,
-              resetAt: result.resetAt.toISOString()
-            }
-          },
-          request.id
-        )
+      if (!result.allowed) {
+        const retryAfterSeconds = Math.ceil((result.resetAt.getTime() - Date.now()) / 1000);
+        reply.header("retry-after", String(Math.max(1, retryAfterSeconds)));
+        return reply.status(429).send(
+          failure(
+            {
+              code: "RATE_LIMITED",
+              message: "Rate limit exceeded.",
+              details: {
+                scope,
+                resetAt: result.resetAt.toISOString()
+              }
+            },
+            request.id
+          )
+        );
+      }
+
+      if (result.error) {
+        // Redis outage occurred, log it but allow request to proceed
+        // Rate limiting is degraded but service availability is maintained
+        console.warn("Rate limit service error:", result.error);
+      }
+    } catch (error) {
+      // If rate limiting service fails catastrophically, log but don't block request
+      // This ensures service availability is prioritized over rate limit enforcement
+      console.error(
+        "Rate limit hook error:",
+        error instanceof Error ? error.message : String(error)
       );
     }
   });

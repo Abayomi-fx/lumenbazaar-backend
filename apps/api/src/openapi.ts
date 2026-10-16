@@ -45,6 +45,27 @@ const errorResponse: SchemaObject = {
   }
 };
 
+const rateLimitHeaders: Record<string, unknown> = {
+  "x-ratelimit-limit": {
+    description: "Maximum number of requests allowed in the current rate limit window.",
+    schema: { type: "integer" }
+  },
+  "x-ratelimit-remaining": {
+    description:
+      "Number of requests remaining in the current rate limit window. Zero means limit reached.",
+    schema: { type: "integer" }
+  },
+  "x-ratelimit-reset": {
+    description: "ISO 8601 timestamp when the current rate limit window resets.",
+    schema: { type: "string", format: "date-time" }
+  },
+  "retry-after": {
+    description:
+      "Number of seconds to wait before retrying. Only present in 429 responses. Per RFC 6585.",
+    schema: { type: "integer", minimum: 1 }
+  }
+};
+
 const assetSchema: SchemaObject = {
   type: "object",
   required: ["code", "issuer"],
@@ -642,14 +663,26 @@ export function buildOpenApiSpec() {
       responses: {
         "200": {
           description: "Successful response",
+          headers: rateLimitHeaders,
           content: {
             "application/json": {
               schema: contract.response
             }
           }
         },
+        "429": {
+          description:
+            "Rate limit exceeded. The client must wait before retrying. See Retry-After header.",
+          headers: rateLimitHeaders,
+          content: {
+            "application/json": {
+              schema: errorResponse
+            }
+          }
+        },
         default: {
           description: "Error response",
+          headers: rateLimitHeaders,
           content: {
             "application/json": {
               schema: errorResponse
@@ -665,7 +698,29 @@ export function buildOpenApiSpec() {
     info: {
       title: "LumenBazaar Backend API",
       version: "0.1.0",
-      description: "Facilitator, seller catalog, discovery, and conformance APIs for LumenBazaar."
+      description: "Facilitator, seller catalog, discovery, and conformance APIs for LumenBazaar.",
+      "x-rate-limiting": {
+        description:
+          "The API implements distributed rate limiting across all replicas using Redis. Each endpoint scope has different limits per 60-second window.",
+        scopes: {
+          facilitator:
+            "Payment verification and settlement endpoints (verify, settle): 60 requests per minute per API key or IP",
+          seller:
+            "Seller management endpoints (create, verify domain): 30 requests per minute per API key or IP",
+          discovery:
+            "Resource discovery and catalog endpoints: 120 requests per minute per API key or IP"
+        },
+        headers: [
+          "x-ratelimit-limit: Maximum requests in current window",
+          "x-ratelimit-remaining: Requests remaining in current window",
+          "x-ratelimit-reset: ISO 8601 timestamp when window resets",
+          "retry-after: Seconds to wait before retrying (429 responses only, RFC 6585)"
+        ],
+        identification:
+          "Rate limits are identified by x-api-key header if present, otherwise by request IP address (x-forwarded-for not trusted)",
+        behavior:
+          "During Redis unavailability, rate limiting degrades to in-memory per-instance limits, prioritizing availability over perfect enforcement"
+      }
     },
     servers: [
       {
@@ -677,6 +732,14 @@ export function buildOpenApiSpec() {
       name
     })),
     paths,
+    components: {
+      headers: {
+        "X-RateLimit-Limit": rateLimitHeaders["x-ratelimit-limit"],
+        "X-RateLimit-Remaining": rateLimitHeaders["x-ratelimit-remaining"],
+        "X-RateLimit-Reset": rateLimitHeaders["x-ratelimit-reset"],
+        "Retry-After": rateLimitHeaders["retry-after"]
+      }
+    },
     "x-docs-consumption": {
       source: `${serviceName}/docs/api/openapi.json`,
       markdown: `${serviceName}/docs/api/openapi.md`
