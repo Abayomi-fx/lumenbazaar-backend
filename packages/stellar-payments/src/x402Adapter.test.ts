@@ -1,3 +1,7 @@
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { loadConfig } from "@lumenbazaar/shared";
@@ -7,6 +11,21 @@ import {
   testPaymentRequirement,
   testPaymentRequest
 } from "@lumenbazaar/testkit";
+import {
+  Account,
+  BASE_FEE,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+  nativeToScVal,
+  type Transaction,
+  xdr
+} from "@stellar/stellar-sdk";
+import type * as StellarSdkModule from "@stellar/stellar-sdk";
+import { type PaymentPayload, type PaymentRequirements } from "@x402/core/types";
+import { createEd25519Signer } from "@x402/stellar";
+import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
 
 import { type FacilitatorSignerProvider } from "./facilitatorSigner.js";
 import { parseVerifyPaymentRequest } from "./paymentPayload.js";
@@ -24,6 +43,17 @@ const signerProvider = {
   getSigner: vi.fn(),
   getStatus: vi.fn()
 } as FacilitatorSignerProvider;
+
+// Load the official SDK from @x402/stellar's node_modules to ensure XDR compatibility
+const officialRequire = createRequire(import.meta.resolve("@x402/stellar/exact/facilitator"));
+const officialSdkCjsEntry = officialRequire.resolve("@stellar/stellar-sdk");
+const officialSdkEntry = resolve(
+  dirname(dirname(dirname(officialSdkCjsEntry))),
+  "lib/esm/index.js"
+);
+const officialStellarSdk = (await import(
+  pathToFileURL(officialSdkEntry).href
+)) as typeof StellarSdkModule;
 
 describe("default x402 Stellar adapter", () => {
   it("fails closed while no facilitator implementation is configured", async () => {
@@ -215,4 +245,602 @@ describe("official x402 Stellar adapter", () => {
       });
     }
   );
+});
+
+describe("official x402 Stellar adapter with upstream ExactStellarScheme integration", () => {
+  describe("valid signed testnet vectors pass upstream verification", () => {
+    it("accepts a valid exact payment with correct signature, network, asset, amount, recipient, and expiry", async () => {
+      const payer = Keypair.random();
+      const recipient = Keypair.random();
+      const facilitator = Keypair.random();
+
+      // Build valid transaction using the official SDK
+      const transaction = new officialStellarSdk.TransactionBuilder(
+        new officialStellarSdk.Account(payer.publicKey(), "0"),
+        {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET
+        }
+      )
+        .addOperation(
+          officialStellarSdk.Operation.invokeContractFunction({
+            contract: testAssetContractId,
+            function: "transfer",
+            args: [
+              officialStellarSdk.nativeToScVal(payer.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(recipient.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(500000n, { type: "i128" })
+            ]
+          })
+        )
+        .setTimeout(60)
+        .build();
+
+      // Sign with payer
+      transaction.sign(officialStellarSdk.Keypair.fromSecret(payer.secret()));
+
+      // Create signed authorization entry
+      const authorization = await officialStellarSdk.authorizeInvocation({
+        signer: officialStellarSdk.Keypair.fromSecret(payer.secret()),
+        validUntilLedgerSeq: 102,
+        networkPassphrase: Networks.TESTNET,
+        invocation: new officialStellarSdk.xdr.SorobanAuthorizedInvocation({
+          function:
+            officialStellarSdk.xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+              (
+                transaction.operations[0] as unknown as {
+                  func: { invokeContract: () => xdr.InvokeContractArgs };
+                }
+              ).func.invokeContract()
+            ),
+          subInvocations: []
+        }) as never
+      });
+
+      // Rebuild transaction with authorization
+      const authorizedTransaction = new officialStellarSdk.TransactionBuilder(
+        new officialStellarSdk.Account(payer.publicKey(), "0"),
+        {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET
+        }
+      )
+        .addOperation(
+          officialStellarSdk.Operation.invokeContractFunction({
+            contract: testAssetContractId,
+            function: "transfer",
+            args: [
+              officialStellarSdk.nativeToScVal(payer.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(recipient.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(500000n, { type: "i128" })
+            ],
+            auth: [authorization as never]
+          })
+        )
+        .setTimeout(60)
+        .build();
+
+      authorizedTransaction.sign(officialStellarSdk.Keypair.fromSecret(payer.secret()));
+
+      const transactionXdr = authorizedTransaction.toXDR();
+
+      // Create the scheme and verify
+      const scheme = new ExactStellarScheme([
+        createEd25519Signer(facilitator.secret(), "stellar:testnet")
+      ]);
+
+      const requirement: PaymentRequirements = {
+        scheme: "exact",
+        network: "stellar:testnet",
+        asset: testAssetContractId,
+        amount: "500000",
+        payTo: recipient.publicKey(),
+        maxTimeoutSeconds: 60,
+        extra: { areFeesSponsored: true }
+      };
+
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: requirement,
+        payload: { transaction: transactionXdr }
+      };
+
+      const response = await scheme.verify(payload, requirement);
+      expect(response).toMatchObject({
+        isValid: true,
+        payer: payer.publicKey()
+      });
+    });
+  });
+
+  describe("wrong signature fails closed", () => {
+    it("rejects payment with invalid signature", async () => {
+      const payer = Keypair.random();
+      const wrongSigner = Keypair.random();
+      const recipient = Keypair.random();
+      const facilitator = Keypair.random();
+
+      // Build transaction but sign with wrong key
+      const transaction = new officialStellarSdk.TransactionBuilder(
+        new officialStellarSdk.Account(payer.publicKey(), "0"),
+        {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET
+        }
+      )
+        .addOperation(
+          officialStellarSdk.Operation.invokeContractFunction({
+            contract: testAssetContractId,
+            function: "transfer",
+            args: [
+              officialStellarSdk.nativeToScVal(payer.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(recipient.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(500000n, { type: "i128" })
+            ]
+          })
+        )
+        .setTimeout(60)
+        .build();
+
+      // Sign with wrong key
+      transaction.sign(officialStellarSdk.Keypair.fromSecret(wrongSigner.secret()));
+
+      const transactionXdr = transaction.toXDR();
+
+      const scheme = new ExactStellarScheme([
+        createEd25519Signer(facilitator.secret(), "stellar:testnet")
+      ]);
+
+      const requirement: PaymentRequirements = {
+        scheme: "exact",
+        network: "stellar:testnet",
+        asset: testAssetContractId,
+        amount: "500000",
+        payTo: recipient.publicKey(),
+        maxTimeoutSeconds: 60,
+        extra: { areFeesSponsored: true }
+      };
+
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: requirement,
+        payload: { transaction: transactionXdr }
+      };
+
+      const response = await scheme.verify(payload, requirement);
+      expect(response).toMatchObject({
+        isValid: false,
+        invalidReason: expect.stringContaining("signature")
+      });
+    });
+  });
+
+  describe("network mismatch fails closed", () => {
+    it("rejects payment with mismatched network", async () => {
+      const payer = Keypair.random();
+      const recipient = Keypair.random();
+      const facilitator = Keypair.random();
+
+      // Build valid transaction for testnet
+      const transaction = new officialStellarSdk.TransactionBuilder(
+        new officialStellarSdk.Account(payer.publicKey(), "0"),
+        {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET
+        }
+      )
+        .addOperation(
+          officialStellarSdk.Operation.invokeContractFunction({
+            contract: testAssetContractId,
+            function: "transfer",
+            args: [
+              officialStellarSdk.nativeToScVal(payer.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(recipient.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(500000n, { type: "i128" })
+            ]
+          })
+        )
+        .setTimeout(60)
+        .build();
+
+      transaction.sign(officialStellarSdk.Keypair.fromSecret(payer.secret()));
+
+      const scheme = new ExactStellarScheme([
+        createEd25519Signer(facilitator.secret(), "stellar:testnet")
+      ]);
+
+      // Require pubnet but provide testnet transaction
+      const requirement: PaymentRequirements = {
+        scheme: "exact",
+        network: "stellar:pubnet",
+        asset: testAssetContractId,
+        amount: "500000",
+        payTo: recipient.publicKey(),
+        maxTimeoutSeconds: 60,
+        extra: { areFeesSponsored: true }
+      };
+
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: requirement,
+        payload: { transaction: transaction.toXDR() }
+      };
+
+      const response = await scheme.verify(payload, requirement);
+      expect(response).toMatchObject({
+        isValid: false,
+        invalidReason: "network_mismatch"
+      });
+    });
+  });
+
+  describe("asset mismatch fails closed", () => {
+    it("rejects payment with wrong asset contract", async () => {
+      const payer = Keypair.random();
+      const recipient = Keypair.random();
+      const facilitator = Keypair.random();
+      const wrongAsset = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+
+      // Build transaction with wrong asset
+      const transaction = new officialStellarSdk.TransactionBuilder(
+        new officialStellarSdk.Account(payer.publicKey(), "0"),
+        {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET
+        }
+      )
+        .addOperation(
+          officialStellarSdk.Operation.invokeContractFunction({
+            contract: wrongAsset,
+            function: "transfer",
+            args: [
+              officialStellarSdk.nativeToScVal(payer.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(recipient.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(500000n, { type: "i128" })
+            ]
+          })
+        )
+        .setTimeout(60)
+        .build();
+
+      transaction.sign(officialStellarSdk.Keypair.fromSecret(payer.secret()));
+
+      const scheme = new ExactStellarScheme([
+        createEd25519Signer(facilitator.secret(), "stellar:testnet")
+      ]);
+
+      const requirement: PaymentRequirements = {
+        scheme: "exact",
+        network: "stellar:testnet",
+        asset: testAssetContractId,
+        amount: "500000",
+        payTo: recipient.publicKey(),
+        maxTimeoutSeconds: 60,
+        extra: { areFeesSponsored: true }
+      };
+
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: requirement,
+        payload: { transaction: transaction.toXDR() }
+      };
+
+      const response = await scheme.verify(payload, requirement);
+      expect(response).toMatchObject({
+        isValid: false,
+        invalidReason: expect.stringContaining("asset")
+      });
+    });
+  });
+
+  describe("amount mismatch fails closed", () => {
+    it("rejects payment with insufficient amount", async () => {
+      const payer = Keypair.random();
+      const recipient = Keypair.random();
+      const facilitator = Keypair.random();
+
+      // Build transaction with wrong amount (too low)
+      const transaction = new officialStellarSdk.TransactionBuilder(
+        new officialStellarSdk.Account(payer.publicKey(), "0"),
+        {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET
+        }
+      )
+        .addOperation(
+          officialStellarSdk.Operation.invokeContractFunction({
+            contract: testAssetContractId,
+            function: "transfer",
+            args: [
+              officialStellarSdk.nativeToScVal(payer.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(recipient.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(100000n, { type: "i128" }) // Too low
+            ]
+          })
+        )
+        .setTimeout(60)
+        .build();
+
+      transaction.sign(officialStellarSdk.Keypair.fromSecret(payer.secret()));
+
+      const scheme = new ExactStellarScheme([
+        createEd25519Signer(facilitator.secret(), "stellar:testnet")
+      ]);
+
+      const requirement: PaymentRequirements = {
+        scheme: "exact",
+        network: "stellar:testnet",
+        asset: testAssetContractId,
+        amount: "500000",
+        payTo: recipient.publicKey(),
+        maxTimeoutSeconds: 60,
+        extra: { areFeesSponsored: true }
+      };
+
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: requirement,
+        payload: { transaction: transaction.toXDR() }
+      };
+
+      const response = await scheme.verify(payload, requirement);
+      expect(response).toMatchObject({
+        isValid: false,
+        invalidReason: expect.stringContaining("amount")
+      });
+    });
+  });
+
+  describe("recipient mismatch fails closed", () => {
+    it("rejects payment to wrong recipient", async () => {
+      const payer = Keypair.random();
+      const correctRecipient = Keypair.random();
+      const wrongRecipient = Keypair.random();
+      const facilitator = Keypair.random();
+
+      // Build transaction with wrong recipient
+      const transaction = new officialStellarSdk.TransactionBuilder(
+        new officialStellarSdk.Account(payer.publicKey(), "0"),
+        {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET
+        }
+      )
+        .addOperation(
+          officialStellarSdk.Operation.invokeContractFunction({
+            contract: testAssetContractId,
+            function: "transfer",
+            args: [
+              officialStellarSdk.nativeToScVal(payer.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(wrongRecipient.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(500000n, { type: "i128" })
+            ]
+          })
+        )
+        .setTimeout(60)
+        .build();
+
+      transaction.sign(officialStellarSdk.Keypair.fromSecret(payer.secret()));
+
+      const scheme = new ExactStellarScheme([
+        createEd25519Signer(facilitator.secret(), "stellar:testnet")
+      ]);
+
+      const requirement: PaymentRequirements = {
+        scheme: "exact",
+        network: "stellar:testnet",
+        asset: testAssetContractId,
+        amount: "500000",
+        payTo: correctRecipient.publicKey(),
+        maxTimeoutSeconds: 60,
+        extra: { areFeesSponsored: true }
+      };
+
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: requirement,
+        payload: { transaction: transaction.toXDR() }
+      };
+
+      const response = await scheme.verify(payload, requirement);
+      expect(response).toMatchObject({
+        isValid: false,
+        invalidReason: expect.stringContaining("recipient")
+      });
+    });
+  });
+
+  describe("operation mismatch fails closed", () => {
+    it("rejects transaction with wrong operation type", async () => {
+      const payer = Keypair.random();
+      const recipient = Keypair.random();
+      const facilitator = Keypair.random();
+
+      // Build transaction with payment operation instead of contract invocation
+      const transaction = new officialStellarSdk.TransactionBuilder(
+        new officialStellarSdk.Account(payer.publicKey(), "0"),
+        {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET
+        }
+      )
+        .addOperation(
+          officialStellarSdk.Operation.payment({
+            destination: recipient.publicKey(),
+            asset: officialStellarSdk.Asset.native(),
+            amount: "100"
+          })
+        )
+        .setTimeout(60)
+        .build();
+
+      transaction.sign(officialStellarSdk.Keypair.fromSecret(payer.secret()));
+
+      const scheme = new ExactStellarScheme([
+        createEd25519Signer(facilitator.secret(), "stellar:testnet")
+      ]);
+
+      const requirement: PaymentRequirements = {
+        scheme: "exact",
+        network: "stellar:testnet",
+        asset: testAssetContractId,
+        amount: "500000",
+        payTo: recipient.publicKey(),
+        maxTimeoutSeconds: 60,
+        extra: { areFeesSponsored: true }
+      };
+
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: requirement,
+        payload: { transaction: transaction.toXDR() }
+      };
+
+      const response = await scheme.verify(payload, requirement);
+      expect(response).toMatchObject({
+        isValid: false,
+        invalidReason: expect.stringContaining("operation")
+      });
+    });
+  });
+
+  describe("expiry mismatch fails closed", () => {
+    it("rejects transaction with authorization expiring too far in future", async () => {
+      const payer = Keypair.random();
+      const recipient = Keypair.random();
+      const facilitator = Keypair.random();
+
+      // Build transaction
+      const transaction = new officialStellarSdk.TransactionBuilder(
+        new officialStellarSdk.Account(payer.publicKey(), "0"),
+        {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET
+        }
+      )
+        .addOperation(
+          officialStellarSdk.Operation.invokeContractFunction({
+            contract: testAssetContractId,
+            function: "transfer",
+            args: [
+              officialStellarSdk.nativeToScVal(payer.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(recipient.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(500000n, { type: "i128" })
+            ]
+          })
+        )
+        .setTimeout(60)
+        .build();
+
+      // Create authorization with expiry far in the future
+      const authorization = await officialStellarSdk.authorizeInvocation({
+        signer: officialStellarSdk.Keypair.fromSecret(payer.secret()),
+        validUntilLedgerSeq: 200, // Beyond the maxTimeoutSeconds of 60
+        networkPassphrase: Networks.TESTNET,
+        invocation: new officialStellarSdk.xdr.SorobanAuthorizedInvocation({
+          function:
+            officialStellarSdk.xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+              (
+                transaction.operations[0] as unknown as {
+                  func: { invokeContract: () => xdr.InvokeContractArgs };
+                }
+              ).func.invokeContract()
+            ),
+          subInvocations: []
+        }) as never
+      });
+
+      // Rebuild with authorization
+      const authorizedTransaction = new officialStellarSdk.TransactionBuilder(
+        new officialStellarSdk.Account(payer.publicKey(), "0"),
+        {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET
+        }
+      )
+        .addOperation(
+          officialStellarSdk.Operation.invokeContractFunction({
+            contract: testAssetContractId,
+            function: "transfer",
+            args: [
+              officialStellarSdk.nativeToScVal(payer.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(recipient.publicKey(), { type: "address" }),
+              officialStellarSdk.nativeToScVal(500000n, { type: "i128" })
+            ],
+            auth: [authorization as never]
+          })
+        )
+        .setTimeout(60)
+        .build();
+
+      authorizedTransaction.sign(officialStellarSdk.Keypair.fromSecret(payer.secret()));
+
+      const scheme = new ExactStellarScheme([
+        createEd25519Signer(facilitator.secret(), "stellar:testnet")
+      ]);
+
+      const requirement: PaymentRequirements = {
+        scheme: "exact",
+        network: "stellar:testnet",
+        asset: testAssetContractId,
+        amount: "500000",
+        payTo: recipient.publicKey(),
+        maxTimeoutSeconds: 60,
+        extra: { areFeesSponsored: true }
+      };
+
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: requirement,
+        payload: { transaction: authorizedTransaction.toXDR() }
+      };
+
+      const response = await scheme.verify(payload, requirement);
+      expect(response).toMatchObject({
+        isValid: false,
+        invalidReason: expect.stringContaining("expiration")
+      });
+    });
+  });
+
+  describe("unexpected upstream errors never become valid", () => {
+    it("fails closed when unexpected upstream error occurs", async () => {
+      const adapter = createX402StellarAdapter({
+        config,
+        signerProvider,
+        createVerifier: async () => ({
+          async verify() {
+            throw new Error("Unexpected upstream error");
+          },
+          async settle() {
+            throw new Error("not used");
+          }
+        })
+      });
+
+      const result = await adapter.verifyExact(verificationInput);
+      expect(result.valid).toBe(false);
+      expect(result.failureCode).toBe("SETTLEMENT_FAILED");
+      expect(JSON.stringify(result)).not.toContain("Unexpected upstream error");
+    });
+
+    it("rejects incompatible upstream responses", async () => {
+      const adapter = createX402StellarAdapter({
+        config,
+        signerProvider,
+        createVerifier: async () => ({
+          async verify() {
+            return { isValid: true } as never; // Missing required payer field
+          },
+          async settle() {
+            throw new Error("not used");
+          }
+        })
+      });
+
+      const result = await adapter.verifyExact(verificationInput);
+      expect(result.valid).toBe(false);
+      expect(result.failureCode).toBe("SETTLEMENT_FAILED");
+    });
+  });
 });

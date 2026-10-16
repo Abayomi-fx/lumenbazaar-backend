@@ -335,4 +335,3 @@ async function archiveSettledPayments(
 
   job.log(`Archived ${totalArchived} settled payment records`);
 }
-}
