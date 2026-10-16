@@ -24,6 +24,7 @@ export type RateLimitResult = {
   remaining: number;
   resetAt: Date;
   scope: RateLimitScope;
+  error?: string;
 };
 
 export type RateLimitEvent = {
@@ -80,24 +81,38 @@ return { count, ttl }
 `;
 
 export class RedisRateLimitCounterStore implements RateLimitCounterStore {
+  private readonly fallback = new InMemoryRateLimitCounterStore();
+  
   constructor(private readonly client: Redis) {}
 
   async consume(key: string, windowMs: number) {
-    const result = await this.client.eval(
-      consumeRateLimitScript,
-      1,
-      `lumenbazaar:rate-limit:${key}`,
-      windowMs
-    );
-    if (!Array.isArray(result) || result.length !== 2) {
-      throw new Error("Redis returned an invalid rate-limit result.");
+    try {
+      const result = await this.client.eval(
+        consumeRateLimitScript,
+        1,
+        `lumenbazaar:rate-limit:${key}`,
+        windowMs
+      );
+      if (!Array.isArray(result) || result.length !== 2) {
+        throw new Error("Redis returned an invalid rate-limit result.");
+      }
+      const count = Number(result[0]);
+      const ttl = Number(result[1]);
+      if (!Number.isSafeInteger(count) || !Number.isSafeInteger(ttl) || ttl < 0) {
+        throw new Error("Redis returned an invalid rate-limit counter.");
+      }
+      return { count, resetAt: Date.now() + ttl };
+    } catch (error) {
+      // On Redis error, degrade gracefully to in-memory rate limiting
+      // This ensures availability during Redis outages, but note that distributed
+      // rate limiting is lost for this request and subsequent requests to other replicas
+      // will not see this request's count.
+      console.warn(
+        "Redis rate limit error, falling back to in-memory",
+        error instanceof Error ? error.message : String(error)
+      );
+      return this.fallback.consume(key, windowMs);
     }
-    const count = Number(result[0]);
-    const ttl = Number(result[1]);
-    if (!Number.isSafeInteger(count) || !Number.isSafeInteger(ttl) || ttl < 0) {
-      throw new Error("Redis returned an invalid rate-limit counter.");
-    }
-    return { count, resetAt: Date.now() + ttl };
   }
 }
 

@@ -7,11 +7,10 @@ import {
   redactSensitiveText,
   type AppConfig,
   type JsonObject,
-  type JsonValue
+  type JsonValue,
+  RedactionService,
+  DEFAULT_TESTNET_POLICY
 } from "@lumenbazaar/shared";
-
-const sensitiveKeyPattern =
-  /(secret|seed|private|token|signature|authorization|password|api[_-]?key|payment[_-]?payload)/i;
 
 export type AuditLogInput = {
   action: string;
@@ -79,7 +78,14 @@ export class PrismaAuditLogStore implements AuditLogStore {
 }
 
 export class AuditLogService {
-  constructor(private readonly store: AuditLogStore = new InMemoryAuditLogStore()) {}
+  private redactionService: RedactionService;
+
+  constructor(
+    private readonly store: AuditLogStore = new InMemoryAuditLogStore(),
+    redactionService?: RedactionService
+  ) {
+    this.redactionService = redactionService || new RedactionService(DEFAULT_TESTNET_POLICY);
+  }
 
   async record(input: AuditLogInput) {
     return this.store.create({
@@ -87,7 +93,7 @@ export class AuditLogService {
       correlationId: input.correlationId ?? getCorrelationId() ?? null,
       actorId: input.actorId ?? null,
       actorType: input.actorType,
-      metadata: sanitizeAuditMetadata(input.metadata ?? {}),
+      metadata: this.redactionService.sanitizeMetadata(input.metadata ?? {}),
       targetId: input.targetId ?? null,
       targetType: input.targetType
     });
@@ -96,18 +102,19 @@ export class AuditLogService {
   async list() {
     return this.store.list();
   }
+
+  setRedactionService(service: RedactionService) {
+    this.redactionService = service;
+  }
 }
 
 export function sanitizeAuditMetadata(metadata: Record<string, unknown>): JsonObject {
-  return Object.fromEntries(
-    Object.entries(metadata).map(([key, value]) => [
-      key,
-      sensitiveKeyPattern.test(key) ? "[redacted]" : toJsonValue(value)
-    ])
-  ) as JsonObject;
+  // Maintained for backward compatibility; prefer RedactionService.sanitizeMetadata()
+  const service = new RedactionService(DEFAULT_TESTNET_POLICY);
+  return service.sanitizeMetadata(metadata);
 }
 
-function toJsonValue(value: unknown): JsonValue {
+function toJsonValue(value: unknown, service: RedactionService): JsonValue {
   if (value === null || typeof value === "number" || typeof value === "boolean") {
     return value;
   }
@@ -117,11 +124,11 @@ function toJsonValue(value: unknown): JsonValue {
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => toJsonValue(item));
+    return value.map((item) => toJsonValue(item, service));
   }
 
   if (typeof value === "object") {
-    return sanitizeAuditMetadata(value as Record<string, unknown>);
+    return service.sanitizeMetadata(value as Record<string, unknown>);
   }
 
   return String(value);

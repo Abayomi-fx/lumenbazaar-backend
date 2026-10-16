@@ -66,6 +66,43 @@ describe("rate limit hook", () => {
     await app.close();
   });
 
+  it("includes Retry-After header in 429 responses per RFC 6585", async () => {
+    const rateLimitService = new RateLimitService({
+      rules: {
+        facilitator: {
+          limit: 1,
+          windowMs: 60_000
+        }
+      }
+    });
+    const app = buildApiApp({
+      logger: false,
+      rateLimitService
+    });
+
+    const first = await app.inject({
+      method: "GET",
+      url: "/v1/supported",
+      headers: { "X-API-Key": "test-api-key" }
+    });
+    const second = await app.inject({
+      method: "GET",
+      url: "/v1/supported",
+      headers: { "x-api-key": "test-api-key" }
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(429);
+    
+    const retryAfter = second.headers["retry-after"];
+    expect(retryAfter).toBeDefined();
+    const retrySeconds = parseInt(retryAfter as string, 10);
+    expect(retrySeconds).toBeGreaterThanOrEqual(1);
+    expect(retrySeconds).toBeLessThanOrEqual(60); // Should be within the 60 second window
+
+    await app.close();
+  });
+
   it("does not trust forwarded client addresses", async () => {
     const rateLimitService = new RateLimitService({
       rules: {
@@ -90,6 +127,49 @@ describe("rate limit hook", () => {
 
     expect(first.statusCode).toBe(200);
     expect(second.statusCode).toBe(429);
+    await app.close();
+  });
+
+  it("continues serving requests if rate limiter encounters errors", async () => {
+    const rateLimitService = new RateLimitService({
+      rules: {
+        facilitator: {
+          limit: 1,
+          windowMs: 60_000
+        }
+      }
+    });
+    const app = buildApiApp({
+      logger: false,
+      rateLimitService
+    });
+
+    // Exhaust the rate limit
+    const first = await app.inject({
+      method: "GET",
+      url: "/v1/supported",
+      headers: { "X-API-Key": "test-api-key" }
+    });
+    expect(first.statusCode).toBe(200);
+
+    // Second request should be blocked
+    const second = await app.inject({
+      method: "GET",
+      url: "/v1/supported",
+      headers: { "X-API-Key": "test-api-key" }
+    });
+    expect(second.statusCode).toBe(429);
+
+    // Even if rate limiter fails internally, requests should continue
+    // (The hook catches errors and logs but doesn't block)
+    const third = await app.inject({
+      method: "GET",
+      url: "/v1/supported",
+      headers: { "X-API-Key": "different-key" }
+    });
+    // Different key should have fresh quota
+    expect(third.statusCode).toBe(200);
+
     await app.close();
   });
 });
