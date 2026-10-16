@@ -6,9 +6,7 @@ import {
   getPrismaClient,
   getGlobalRedactionService,
   type PaymentRetentionPolicy,
-  DEFAULT_TESTNET_POLICY,
-  calculateRecordAge,
-  isRecordExpired
+  DEFAULT_TESTNET_POLICY
 } from "@lumenbazaar/shared";
 
 export type StalePaymentCleanupJobData = {
