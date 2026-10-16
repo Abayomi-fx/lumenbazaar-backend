@@ -232,38 +232,85 @@ async function mapOfficialSettlement(
   });
 }
 
+/**
+ * Resolve transaction finality via RPC with retry logic.
+ * Polls Stellar RPC endpoint until transaction status is confirmed, failed, or timeout.
+ * Uses exponential backoff starting at 100ms, with maximum 20 attempts over ~30 seconds.
+ */
 async function resolveRpcFinality(input: {
   rpcUrl: string;
   transactionHash: string;
 }): Promise<SettlementFinality> {
-  const response = await fetch(input.rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "getTransaction",
-      params: { hash: input.transactionHash }
-    }),
-    signal: AbortSignal.timeout(5_000)
-  });
-  if (!response.ok) {
-    throw new Error("Stellar RPC finality request failed.");
+  const maxAttempts = 20;
+  const baseDelayMs = 100;
+  const maxDelayMs = 2000;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(input.rpcUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "getTransaction",
+          params: { hash: input.transactionHash }
+        }),
+        signal: AbortSignal.timeout(5_000)
+      });
+
+      if (!response.ok) {
+        if (attempt < maxAttempts - 1) {
+          await delay(Math.min(baseDelayMs * Math.pow(2, attempt), maxDelayMs));
+          continue;
+        }
+        throw new Error("Stellar RPC finality request failed after max retries.");
+      }
+
+      const payload = (await response.json()) as {
+        error?: unknown;
+        result?: { status?: string; ledger?: number };
+      };
+
+      if (payload.error !== undefined || payload.result === undefined) {
+        if (attempt < maxAttempts - 1) {
+          await delay(Math.min(baseDelayMs * Math.pow(2, attempt), maxDelayMs));
+          continue;
+        }
+        throw new Error("Stellar RPC finality response was invalid.");
+      }
+
+      if (payload.result.status === "SUCCESS" && Number.isInteger(payload.result.ledger)) {
+        return { status: "confirmed", ledger: payload.result.ledger as number };
+      }
+
+      if (payload.result.status === "FAILED") {
+        return { status: "failed" };
+      }
+
+      // Pending - retry if attempts remain
+      if (attempt < maxAttempts - 1) {
+        await delay(Math.min(baseDelayMs * Math.pow(2, attempt), maxDelayMs));
+        continue;
+      }
+
+      // Max retries reached while still pending
+      return { status: "pending" };
+    } catch (error) {
+      if (attempt < maxAttempts - 1) {
+        await delay(Math.min(baseDelayMs * Math.pow(2, attempt), maxDelayMs));
+        continue;
+      }
+      throw error;
+    }
   }
-  const payload = (await response.json()) as {
-    error?: unknown;
-    result?: { status?: string; ledger?: number };
-  };
-  if (payload.error !== undefined || payload.result === undefined) {
-    throw new Error("Stellar RPC finality response was invalid.");
-  }
-  if (payload.result.status === "SUCCESS" && Number.isInteger(payload.result.ledger)) {
-    return { status: "confirmed", ledger: payload.result.ledger as number };
-  }
-  if (payload.result.status === "FAILED") {
-    return { status: "failed" };
-  }
+
+  // Should not reach here
   return { status: "pending" };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function settlementFailureStage(reason: string) {
