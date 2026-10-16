@@ -11,6 +11,7 @@ export type ReceiptStore = {
   createReceipt: (input: CreateReceiptInput) => Promise<Receipt>;
   getReceipt: (receiptId: string) => Promise<Receipt | undefined>;
   getReceiptByAttempt: (paymentAttemptId: string) => Promise<Receipt | undefined>;
+  listReceiptsBySeller: (sellerId: string, limit?: number) => Promise<Receipt[]>;
 };
 
 export class InMemoryReceiptStore implements ReceiptStore {
@@ -40,5 +41,13 @@ export class InMemoryReceiptStore implements ReceiptStore {
   async getReceiptByAttempt(paymentAttemptId: string) {
     const receiptId = this.byAttempt.get(paymentAttemptId);
     return receiptId === undefined ? undefined : this.receipts.get(receiptId);
+  }
+
+  async listReceiptsBySeller(sellerId: string, limit = 100) {
+    const matches = [...this.receipts.values()]
+      .filter((receipt) => receipt.sellerId === sellerId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+    return matches.slice(0, limit);
   }
 }

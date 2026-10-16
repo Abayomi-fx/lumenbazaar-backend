@@ -10,7 +10,9 @@ type RouteContract = {
   summary: string;
   tags: string[];
   requestBody?: SchemaObject;
+  requestBodyRequired?: boolean;
   response: SchemaObject;
+  responseMediaType?: string;
 };
 
 const jsonObject: SchemaObject = {
@@ -375,6 +377,30 @@ const conformanceRun: SchemaObject = {
   }
 };
 
+const streamAccessGrant: SchemaObject = {
+  type: "object",
+  required: ["token", "scope", "subjectId", "expiresAt", "streamPath"],
+  properties: {
+    token: {
+      type: "string",
+      description: "Short-lived signed grant presented as a Bearer token or access_token query."
+    },
+    scope: { type: "string", enum: ["receipt", "seller"] },
+    subjectId: { type: "string" },
+    expiresAt: { type: "string", format: "date-time" },
+    streamPath: { type: "string" }
+  }
+};
+
+const receiptEventStream: SchemaObject = {
+  type: "string",
+  description:
+    "Server-sent event stream. Emits `stream.ready`, `receipt.status`, optional `stream.reset`, " +
+    "`stream.end`, and `: hb` heartbeat comments. Frames carry an `id` sequence and a signed " +
+    "resume `cursor`; `receipt.status` data contains status metadata only and never includes " +
+    "signed payment payloads, transaction signatures, or receipt evidence material."
+};
+
 export const apiRouteContracts: RouteContract[] = [
   {
     method: "get",
@@ -449,6 +475,31 @@ export const apiRouteContracts: RouteContract[] = [
   },
   {
     method: "post",
+    path: "/v1/receipts/{receiptId}/stream-access",
+    operationId: "createReceiptStreamAccessGrant",
+    summary: "Mint a short-lived grant for a receipt status event stream.",
+    tags: ["facilitator"],
+    requestBody: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ttlSeconds: { type: "integer", minimum: 1, maximum: 900, default: 300 }
+      }
+    },
+    requestBodyRequired: false,
+    response: streamAccessGrant
+  },
+  {
+    method: "get",
+    path: "/v1/receipts/{receiptId}/stream",
+    operationId: "streamReceiptStatusEvents",
+    summary: "Stream authorized receipt status updates until the receipt reaches a final state.",
+    tags: ["facilitator"],
+    response: receiptEventStream,
+    responseMediaType: "text/event-stream"
+  },
+  {
+    method: "post",
     path: "/v1/payment-sessions",
     operationId: "createPaymentSession",
     summary: "Create a capped Stellar upto payment session.",
@@ -497,6 +548,41 @@ export const apiRouteContracts: RouteContract[] = [
     summary: "Fetch a seller profile.",
     tags: ["sellers"],
     response: seller
+  },
+  {
+    method: "post",
+    path: "/v1/sellers/{sellerId}/stream-access",
+    operationId: "createSellerStreamAccessGrant",
+    summary: "Mint a short-lived seller stream grant from a wallet signature.",
+    tags: ["sellers"],
+    requestBody: {
+      type: "object",
+      required: ["walletAddress", "expiresAt", "signature"],
+      additionalProperties: false,
+      properties: {
+        walletAddress: { type: "string" },
+        expiresAt: {
+          type: "string",
+          format: "date-time",
+          description: "Requested grant expiry; must be within 900 seconds of the server clock."
+        },
+        signature: {
+          type: "string",
+          description:
+            "SEP-53 signature by the seller wallet over the canonical stream access message."
+        }
+      }
+    },
+    response: streamAccessGrant
+  },
+  {
+    method: "get",
+    path: "/v1/sellers/{sellerId}/receipts/stream",
+    operationId: "streamSellerReceiptStatusEvents",
+    summary: "Stream authorized receipt status updates for one seller.",
+    tags: ["sellers"],
+    response: receiptEventStream,
+    responseMediaType: "text/event-stream"
   },
   {
     method: "post",
@@ -652,7 +738,7 @@ export function buildOpenApiSpec() {
         ? {}
         : {
             requestBody: {
-              required: true,
+              required: contract.requestBodyRequired ?? true,
               content: {
                 "application/json": {
                   schema: contract.requestBody
@@ -662,10 +748,14 @@ export function buildOpenApiSpec() {
           }),
       responses: {
         "200": {
+          description:
+            contract.responseMediaType === "text/event-stream"
+              ? "Server-sent event stream"
+              : "Successful response",
           description: "Successful response",
           headers: rateLimitHeaders,
           content: {
-            "application/json": {
+            [contract.responseMediaType ?? "application/json"]: {
               schema: contract.response
             }
           }

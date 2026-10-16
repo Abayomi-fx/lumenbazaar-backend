@@ -18,6 +18,8 @@ export const errorCodes = [
   "ROUTE_TEMPLATE_INVALID",
   "VALIDATION_FAILED",
   "RATE_LIMITED",
+  "UNAUTHORIZED",
+  "FORBIDDEN",
   "INTERNAL_ERROR"
 ] as const;
 
@@ -43,6 +45,8 @@ export const defaultErrorStatus: Record<ErrorCode, number> = {
   ROUTE_TEMPLATE_INVALID: 400,
   VALIDATION_FAILED: 400,
   RATE_LIMITED: 429,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
   INTERNAL_ERROR: 500
 };
 

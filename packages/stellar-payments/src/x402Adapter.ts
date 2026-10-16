@@ -353,6 +353,7 @@ function failureMessage(reason: string): string {
     ASSET_MISMATCH: "Payment asset does not match the requirement.",
     AUTH_EXPIRED: "Payment authorization expiry is invalid.",
     CATALOG_VALIDATION_FAILED: "Payment payload is invalid.",
+    FORBIDDEN: "Payment payload is invalid.",
     INTERNAL_ERROR: "Payment payload is invalid.",
     INVALID_PAYMENT_PAYLOAD: "Official Stellar verification rejected the payment payload.",
     INVALID_SIGNATURE: "Payment authorization signature is invalid.",
@@ -366,6 +367,7 @@ function failureMessage(reason: string): string {
     SELLER_NOT_FOUND: "Payment payload is invalid.",
     SETTLEMENT_FAILED: "Official Stellar verification could not be completed.",
     TRUSTLINE_REQUIRED: "Payment payload is invalid.",
+    UNAUTHORIZED: "Payment payload is invalid.",
     UNSUPPORTED_ASSET: "Payment payload is invalid.",
     UNSUPPORTED_NETWORK: "Payment network is not supported.",
     VALIDATION_FAILED: "Payment payload is invalid."
