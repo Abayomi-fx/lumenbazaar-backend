@@ -14,3 +14,4 @@ export * from "./pagination.js";
 export * from "./db/client.js";
 export * from "./retentionPolicy.js";
 export * from "./routeTemplates.js";
+export * from "./webhooks.js";

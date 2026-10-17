@@ -23,6 +23,8 @@ model Seller {
   catalogEvents    CatalogEvent[]
   mcpServers       McpServer[]
   searchDocuments  SearchDocument[]
+  webhookEndpoints WebhookEndpoint[]
+  webhookEvents    WebhookEvent[]
 
   @@index([domain])
 }
@@ -395,3 +397,74 @@ model OperatorConfig {
   value     Json
   updatedAt DateTime @updatedAt
 }
+
+model WebhookEndpoint {
+  id                  String              @id @default(cuid())
+  sellerId            String
+  url                 String
+  isActive            Boolean             @default(true)
+  lastDeliveryAt      DateTime?
+  lastDeliveryStatus  Int?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  seller              Seller              @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  secrets             WebhookSecret[]
+  deliveryAttempts    WebhookDeliveryAttempt[]
+
+  @@index([sellerId, isActive])
+  @@index([createdAt])
+}
+
+model WebhookSecret {
+  id                 String             @id @default(cuid())
+  endpointId         String
+  secretHash         String
+  isCurrent          Boolean            @default(true)
+  createdAt          DateTime           @default(now())
+  rotatedOutAt       DateTime?
+  endpoint           WebhookEndpoint    @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId, isCurrent])
+  @@index([endpointId, rotatedOutAt])
+}
+
+model WebhookEvent {
+  id                  String              @id @default(cuid())
+  eventId             String              @unique
+  sellerId            String
+  eventType           String
+  paymentAttemptId    String
+  settlementId        String
+  status              String
+  payload             Json
+  createdAt           DateTime            @default(now())
+  seller              Seller              @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  deliveryAttempts    WebhookDeliveryAttempt[]
+
+  @@index([sellerId, createdAt])
+  @@index([eventId])
+  @@index([paymentAttemptId])
+  @@index([settlementId])
+  @@index([eventType, createdAt])
+}
+
+model WebhookDeliveryAttempt {
+  id                 String            @id @default(cuid())
+  eventId            String
+  endpointId         String
+  attemptNumber      Int
+  requestUrl         String
+  requestHeaders     Json
+  statusCode         Int?
+  responseBodyTruncated String?
+  latencyMs          Int
+  errorClass         String?
+  createdAt          DateTime          @default(now())
+  event              WebhookEvent      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  endpoint           WebhookEndpoint   @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, attemptNumber])
+  @@index([endpointId, createdAt])
+  @@index([createdAt])
+}
+

@@ -30,6 +30,7 @@ import { registerPaymentSessionRoutes } from "./routes/paymentSessions.js";
 import { registerResourceRoutes } from "./routes/resources.js";
 import { registerSellerRoutes } from "./routes/sellers.js";
 import { registerStreamRoutes } from "./routes/streams.js";
+import { registerWebhookRoutes } from "./routes/webhooks.js";
 import {
   ReceiptStatusStreamService,
   type EventStreamTuning
@@ -53,6 +54,8 @@ import {
 import { ResourceService } from "./services/resources.js";
 import { SearchService } from "./services/search.js";
 import { SellerService } from "./services/sellers.js";
+import { WebhookService } from "./services/webhooks.js";
+import { WebhookEventService } from "./services/webhookEvents.js";
 
 export type BuildApiAppOptions = {
   config?: AppConfig;
@@ -62,6 +65,8 @@ export type BuildApiAppOptions = {
   settlementService?: SettlementService;
   receiptService?: ReceiptService;
   sellerService?: SellerService;
+  webhookService?: WebhookService;
+  webhookEventService?: WebhookEventService;
   resourceService?: ResourceService;
   catalogValidationService?: CatalogValidationService;
   catalogService?: CatalogService;
@@ -236,6 +241,8 @@ export function buildApiApp(options: BuildApiAppOptions = {}) {
     app.addHook("onClose", async () => unsubscribeReceiptStatusChanges());
   }
 
+  const webhookEventService = options.webhookEventService ?? new WebhookEventService();
+
   registerFacilitatorRoutes(app, {
     config,
     verificationService,
@@ -247,6 +254,7 @@ export function buildApiApp(options: BuildApiAppOptions = {}) {
   });
   registerPaymentSessionRoutes(app, { paymentSessionService });
   registerSellerRoutes(app, { sellerService });
+  registerWebhookRoutes(app, { webhookService: options.webhookService });
   registerResourceRoutes(app, { resourceService });
   registerDiscoveryRoutes(app, {
     catalogValidationService,
