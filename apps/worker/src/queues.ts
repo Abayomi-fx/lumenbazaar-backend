@@ -13,6 +13,8 @@ export const queueNames = {
   receiptFinalizer: "receipt-finalizer",
   stalePaymentCleanup: "stale-payment-cleanup",
   webhookDelivery: "webhook-delivery",
+  outboxRelay: "outbox-relay",
+  outboxCleanup: "outbox-cleanup",
   deadLetter: "dead-letter"
 } as const;
 

@@ -468,3 +468,40 @@ model WebhookDeliveryAttempt {
   @@index([createdAt])
 }
 
+model OutboxEvent {
+  id                 String            @id @default(cuid())
+  aggregateType      String            // "settlement", "receipt", "resource", "catalog"
+  aggregateId        String            // settlement/receipt/resource/catalogEvent ID
+  eventType          String            // "settlement.confirmed", "receipt.finalized", "resource.indexed", etc.
+  payloadVersion     Int               @default(1)
+  payload            Json              // Event data - allowlisted fields only, no secrets
+  status             String            @default("pending") // "pending", "processing", "delivered", "dead"
+  attemptCount       Int               @default(0)
+  nextAttemptAt      DateTime          @default(now())
+  lockedBy           String?           // Worker ID claiming the batch
+  lockExpiresAt      DateTime?         // Lease expiry for crash recovery
+  lastError          String?           // Truncated error message (max 500 chars), redacted
+  deliveredAt        DateTime?         // When status changed to "delivered"
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@unique([aggregateType, aggregateId, eventType, createdAt]) // Prevents duplicate events for same aggregate transition
+  @@index([status, nextAttemptAt]) // Relay query: find next batch to process
+  @@index([status, createdAt]) // Cleanup query: find delivered events to remove
+  @@index([aggregateType, aggregateId]) // Find events for specific aggregate
+  @@index([lockedBy, lockExpiresAt]) // Find stale locks for recovery
+}
+
+model ProcessedOutboxEvent {
+  id                 String            @id @default(cuid())
+  outboxEventId      String            @unique // Foreign key to OutboxEvent
+  aggregateType      String
+  aggregateId        String
+  eventType          String
+  consumerId         String            // Handler that processed this event (e.g., "settlement.relay", "catalog.indexer")
+  processedAt        DateTime          @default(now())
+
+  @@unique([outboxEventId, consumerId]) // Idempotency: same event+consumer combo never processed twice
+  @@index([aggregateType, aggregateId, consumerId])
+}
+
