@@ -12,6 +12,8 @@ import { settlementReconciliationJobId } from "@lumenbazaar/stellar-payments";
 import { enqueueSettlementConfirmation } from "./jobQueue.js";
 import { createBullMqConnection, createBullMqQueue, queueNames, type QueueName } from "./queues.js";
 import { handleNetworkHealth, type NetworkHealthJobData } from "./workers/networkHealth.js";
+import { handleOutboxRelay, type OutboxRelayJobData } from "./workers/outboxRelay.js";
+import { handleOutboxCleanup, type OutboxCleanupJobData } from "./workers/outboxCleanup.js";
 import {
   handleReceiptFinalizer,
   type ReceiptFinalizerJobData
@@ -156,6 +158,20 @@ export class BullMqWorkerBackend implements WorkerBackend {
       )
     );
 
+    // Add outbox relay worker
+    this.workers.push(
+      new Worker(
+        queueNames.outboxRelay,
+        async (job: Job<Record<string, unknown>>) => {
+          await handleOutboxRelay(job as Job<OutboxRelayJobData>, this.config);
+          this.recordProcessedJob(job, queueNames.outboxRelay);
+        },
+        {
+          connection: this.connection
+        }
+      )
+    );
+
     // Add receipt finalizer worker
     this.workers.push(
       new Worker(
@@ -177,6 +193,20 @@ export class BullMqWorkerBackend implements WorkerBackend {
         async (job: Job<Record<string, unknown>>) => {
           await handleStalePaymentCleanup(job as Job<StalePaymentCleanupJobData>);
           this.recordProcessedJob(job, queueNames.stalePaymentCleanup);
+        },
+        {
+          connection: this.connection
+        }
+      )
+    );
+
+    // Add outbox cleanup worker
+    this.workers.push(
+      new Worker(
+        queueNames.outboxCleanup,
+        async (job: Job<Record<string, unknown>>) => {
+          await handleOutboxCleanup(job as Job<OutboxCleanupJobData>, this.config);
+          this.recordProcessedJob(job, queueNames.outboxCleanup);
         },
         {
           connection: this.connection
