@@ -210,9 +210,11 @@ export class PrismaResourceStore implements ResourceStore {
 export class PrismaCatalogEventStore implements CatalogEventStore {
   constructor(private readonly db: PrismaClient) {}
 
-  async createCatalogEvent(input: Omit<CatalogEvent, "id" | "createdAt">) {
+  async createCatalogEvent(input: Omit<CatalogEvent, "id" | "createdAt">, tx?: Prisma.TransactionClient) {
+    // Use provided transaction client if available, otherwise use root client
+    const client = tx ?? this.db;
     return mapCatalogEvent(
-      await this.db.catalogEvent.create({
+      await client.catalogEvent.create({
         data: { ...input, metadata: json(input.metadata) }
       })
     );

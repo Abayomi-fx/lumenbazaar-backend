@@ -7,6 +7,7 @@ import {
   getCorrelationId,
   LumenError,
   isSupportedNetwork,
+  writeOutboxEvent,
   type ErrorCode,
   type PaymentAttempt,
   type Receipt,
@@ -221,9 +222,31 @@ export class PrismaPaymentStatePersistence implements PaymentStatePersistence {
             })
           })
         );
+
+        // Write outbox event for receipt finalization (transactional)
+        // This replaces the notifyReceiptStatusChange call that was outside the transaction
+        await writeOutboxEvent(tx, {
+          aggregateType: "receipt",
+          aggregateId: receipt.id,
+          eventType: "receipt.status_changed",
+          payload: {
+            receiptId: receipt.id,
+            paymentAttemptId: receipt.paymentAttemptId,
+            sellerId: receipt.sellerId,
+            status: receipt.status,
+            transactionHash: receipt.transactionHash,
+            ledger: receipt.ledger,
+            amount: receipt.amount,
+            assetCode: receipt.assetCode,
+            assetIssuer: receipt.assetIssuer,
+            settledAt: receipt.settledAt
+          }
+        });
+
         return { attempt, settlement, receipt };
       });
-      this.notifyReceiptStatusChange(result.receipt);
+      // Note: notifyReceiptStatusChange has been moved to outbox relay
+      // The event is now delivered asynchronously by the outbox relay worker
       return result;
     } catch (error) {
       throwReplayOr(error);
@@ -255,6 +278,23 @@ export class PrismaPaymentStatePersistence implements PaymentStatePersistence {
         const attempt = mapPaymentAttempt(
           await tx.paymentAttempt.findUniqueOrThrow({ where: { id: input.attempt.id } })
         );
+
+        // Write outbox event for settlement reconciliation if needed
+        if (settlement.reconciliationState === "pending") {
+          await writeOutboxEvent(tx, {
+            aggregateType: "settlement",
+            aggregateId: settlement.id,
+            eventType: "settlement.reconciliation_enqueued",
+            payload: {
+              settlementId: settlement.id,
+              paymentAttemptId: settlement.paymentAttemptId,
+              transactionHash: settlement.transactionHash,
+              network: settlement.network,
+              correlationId: settlement.correlationId
+            }
+          });
+        }
+
         return { attempt, settlement };
       });
     } catch (error) {
