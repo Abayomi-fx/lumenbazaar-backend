@@ -27,6 +27,7 @@ import { registerDiscoveryRoutes } from "./routes/discovery.js";
 import { registerFacilitatorRoutes } from "./routes/facilitator.js";
 import { registerMetadataRoutes } from "./routes/metadata.js";
 import { registerPaymentSessionRoutes } from "./routes/paymentSessions.js";
+import { registerReceiptVerificationRoutes } from "./routes/receiptVerification.js";
 import { registerResourceRoutes } from "./routes/resources.js";
 import { registerSellerRoutes } from "./routes/sellers.js";
 import { registerStreamRoutes } from "./routes/streams.js";
@@ -270,6 +271,11 @@ export function buildApiApp(options: BuildApiAppOptions = {}) {
     sellerService,
     streamAccess: receiptStatusStreams.streamAccess,
     streams: receiptStatusStreams
+  });
+  registerReceiptVerificationRoutes(app, {
+    receiptService: routeReceiptService,
+    attemptStore: verificationService.getAttemptStore(),
+    settlementStore: paymentPersistence.settlementStore
   });
 
   return app;
