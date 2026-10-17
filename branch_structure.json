@@ -1,0 +1,18 @@
+{
+  "default_branch": "develop",
+  "branches": [
+    "develop",
+    "origin",
+    "security/issue-43-support-zero-downtime-facilitator-signer"
+  ],
+  "parent": {
+    "develop": null,
+    "origin": "develop",
+    "security/issue-43-support-zero-downtime-facilitator-signer": "develop"
+  },
+  "order": [
+    "develop",
+    "origin",
+    "security/issue-43-support-zero-downtime-facilitator-signer"
+  ]
+}

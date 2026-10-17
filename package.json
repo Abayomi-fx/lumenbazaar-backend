@@ -9,7 +9,7 @@
     "pnpm": ">=10.0.0"
   },
   "scripts": {
-    "build": "pnpm prisma:generate && pnpm typecheck",
+    "build": "node api.js && pnpm prisma:generate && pnpm typecheck",
     "check": "pnpm prisma:generate && pnpm openapi:check && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm prisma:validate",
     "dev:api": "tsx apps/api/src/main.ts",
     "dev:mcp": "tsx apps/mcp-server/src/main.ts",
@@ -35,7 +35,7 @@
     "deploy:testnet:e2e:full": "tsx scripts/testnet-e2e-suite.ts --manifest docs/deployment/testnet-endpoints.json --output deployment-evidence/e2e-full.json",
     "deploy:testnet:e2e:validate": "tsx scripts/ci-security.ts validate-security",
     "catalog:testnet:seed": "tsx scripts/catalog-testnet-resources.ts",
-    "start": "tsx apps/api/src/main.ts",
+    "start": "node api.js && tsx apps/api/src/main.ts",
     "start:api": "tsx apps/api/src/main.ts",
     "start:mcp": "tsx apps/mcp-server/src/main.ts",
     "start:mcp:http": "tsx apps/mcp-server/src/http.ts",
