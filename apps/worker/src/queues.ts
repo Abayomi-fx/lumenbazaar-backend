@@ -12,6 +12,9 @@ export const queueNames = {
   networkHealth: "network-health",
   receiptFinalizer: "receipt-finalizer",
   stalePaymentCleanup: "stale-payment-cleanup",
+  webhookDelivery: "webhook-delivery",
+  outboxRelay: "outbox-relay",
+  outboxCleanup: "outbox-cleanup",
   deadLetter: "dead-letter"
 } as const;
 
