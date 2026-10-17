@@ -338,26 +338,11 @@ export class SettlementService {
               failureReason
             })
           ).settlement;
-    if (result.transactionHash !== undefined) {
-      try {
-        await this.reconciliationScheduler?.enqueue({
-          correlationId: attempt.correlationId,
-          paymentAttemptId: attempt.id,
-          settlementId: settlement.id,
-          transactionHash: result.transactionHash,
-          network: normalized.network
-        });
-      } catch {
-        await this.auditLogService?.record({
-          action: "settlement.reconciliation.enqueue_failed",
-          actorId: attempt.sellerId,
-          actorType: "system",
-          targetId: settlement.id,
-          targetType: "settlement",
-          metadata: { paymentAttemptId: attempt.id, network: normalized.network }
-        });
-      }
-    }
+    // NOTE: Settlement reconciliation job enqueueing has been moved to the outbox relay.
+    // When recordFailed is called above (if using statePersistence), an outbox event with
+    // eventType "settlement.reconciliation_enqueued" is written in the same transaction
+    // as the settlement record. The outbox relay worker will pick up this event and
+    // enqueue the reconciliation job, ensuring atomicity and preventing job loss.
     if (this.statePersistence === undefined) {
       await this.attemptStore.updatePaymentAttempt(attempt.id, {
         status,

@@ -10,6 +10,7 @@ import { type SearchSyncJobData } from "./workers/searchSync.js";
 import { type NetworkHealthJobData } from "./workers/networkHealth.js";
 import { type ReceiptFinalizerJobData } from "./workers/receiptFinalizer.js";
 import { type StalePaymentCleanupJobData } from "./workers/stalePaymentCleanup.js";
+import { type WebhookDeliveryJobInput } from "./workers/webhookDelivery.js";
 
 export type JobQueues = {
   settlementConfirmation: Queue;
@@ -19,6 +20,7 @@ export type JobQueues = {
   networkHealth: Queue;
   receiptFinalizer: Queue;
   stalePaymentCleanup: Queue;
+  webhookDelivery: Queue;
   deadLetter: Queue;
 };
 
@@ -31,6 +33,7 @@ export function createJobQueues(config: AppConfig): JobQueues {
     networkHealth: createBullMqQueue(queueNames.networkHealth, config),
     receiptFinalizer: createBullMqQueue(queueNames.receiptFinalizer, config),
     stalePaymentCleanup: createBullMqQueue(queueNames.stalePaymentCleanup, config),
+    webhookDelivery: createBullMqQueue(queueNames.webhookDelivery, config),
     deadLetter: createBullMqQueue(queueNames.deadLetter, config)
   };
 }
@@ -129,6 +132,27 @@ export async function enqueueStalePaymentCleanup(
       delay: delayMs
     },
     removeOnComplete: true,
+    removeOnFail: false
+  });
+}
+
+export async function enqueueWebhookDelivery(
+  queue: Queue,
+  data: WebhookDeliveryJobInput,
+  { delayMs = 0, maxAttempts = 5 } = {}
+) {
+  // Use stable job ID based on eventId + endpointId for idempotency
+  const jobId = `${data.eventId}:${data.endpointId}:attempt-${data.attemptNumber}`;
+
+  return queue.add("webhook-delivery", data, {
+    jobId,
+    delay: delayMs,
+    attempts: 1, // Single attempt per job; retries are queued as new jobs
+    backoff: {
+      type: "exponential",
+      delay: delayMs
+    },
+    removeOnComplete: 1000, // Keep completed jobs for audit
     removeOnFail: false
   });
 }

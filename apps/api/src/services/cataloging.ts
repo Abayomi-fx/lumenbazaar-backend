@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import { LumenError, type CatalogEvent, type JsonObject } from "@lumenbazaar/shared";
+import { type Prisma } from "@prisma/client";
+import { LumenError, type CatalogEvent, type JsonObject, writeOutboxEvent } from "@lumenbazaar/shared";
 
 import { type CatalogValidationService } from "./catalogValidation.js";
 import { parseDiscoveryMetadata, toResourceCreateInput } from "./discoveryMetadata.js";
@@ -27,13 +28,16 @@ export class InMemoryResourceIndexingQueue implements ResourceIndexingQueue {
 }
 
 export type CatalogEventStore = {
-  createCatalogEvent: (input: Omit<CatalogEvent, "id" | "createdAt">) => Promise<CatalogEvent>;
+  createCatalogEvent: (
+    input: Omit<CatalogEvent, "id" | "createdAt">,
+    tx?: Prisma.TransactionClient
+  ) => Promise<CatalogEvent>;
 };
 
 export class InMemoryCatalogEventStore implements CatalogEventStore {
   private readonly events = new Map<string, CatalogEvent>();
 
-  async createCatalogEvent(input: Omit<CatalogEvent, "id" | "createdAt">) {
+  async createCatalogEvent(input: Omit<CatalogEvent, "id" | "createdAt">, tx?: Prisma.TransactionClient) {
     const event: CatalogEvent = {
       id: `catalog_event_${randomUUID().replaceAll("-", "").slice(0, 24)}`,
       ...input,
@@ -89,23 +93,68 @@ export class CatalogService {
       throw new LumenError("INTERNAL_ERROR", "Resource version was not created.");
     }
 
-    const event = await this.eventStore.createCatalogEvent({
-      resourceId: resource.id,
-      sellerId: resource.sellerId,
-      type: "cataloged",
-      status: "accepted",
-      reason: null,
-      metadata: {
-        metadataVersion: metadata.metadataVersion,
-        resource: metadata.resource as JsonObject
-      }
-    });
+    // Create catalog event within transaction to ensure atomicity
+    const db = (this.resourceService as any).db ?? (this.resourceService.getStore() as any).db;
+    const event = db !== undefined
+      ? await db.$transaction(async (tx) => {
+          const evt = await this.eventStore.createCatalogEvent({
+            resourceId: resource.id,
+            sellerId: resource.sellerId,
+            type: "cataloged",
+            status: "accepted",
+            reason: null,
+            metadata: {
+              metadataVersion: metadata.metadataVersion,
+              resource: metadata.resource as JsonObject
+            }
+          }, tx);
 
-    await this.indexingQueue.addResourceIndexingJob({
-      name: "resource.index",
-      resourceId: resource.id,
-      versionId: version.id
-    });
+          // Write outbox events for both resource indexing and catalog event (atomic)
+          await writeOutboxEvent(tx, {
+            aggregateType: "catalog",
+            aggregateId: evt.id,
+            eventType: "catalog.resource_cataloged",
+            payload: {
+              resourceId: resource.id,
+              catalogEventId: evt.id,
+              versionId: version.id,
+              sellerId: resource.sellerId,
+              type: resource.type,
+              network: resource.network
+            }
+          });
+
+          await writeOutboxEvent(tx, {
+            aggregateType: "resource",
+            aggregateId: resource.id,
+            eventType: "resource.indexed",
+            payload: {
+              resourceId: resource.id,
+              versionId: version.id,
+              sellerId: resource.sellerId
+            }
+          });
+
+          return evt;
+        })
+      : await this.eventStore.createCatalogEvent({
+          resourceId: resource.id,
+          sellerId: resource.sellerId,
+          type: "cataloged",
+          status: "accepted",
+          reason: null,
+          metadata: {
+            metadataVersion: metadata.metadataVersion,
+            resource: metadata.resource as JsonObject
+          }
+        });
+
+    // Note: Removed direct indexing queue call. Outbox relay worker now handles:
+    // 1. Picking up catalog.resource_cataloged event
+    // 2. Picking up resource.indexed event
+    // 3. Enqueueing resource indexing job (or performing indexing)
+    // This ensures indexing job is enqueued only after both events are persisted.
+    // await this.indexingQueue.addResourceIndexingJob({...}); // REMOVED
 
     await this.auditLogService?.record({
       action: "resource.catalog",
