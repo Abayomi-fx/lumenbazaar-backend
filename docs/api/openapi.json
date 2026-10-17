@@ -1229,6 +1229,262 @@
         }
       }
     },
+    "/v1/receipts/{receiptId}/verify": {
+      "get": {
+        "operationId": "verifyReceipt",
+        "summary": "Verify a receipt against persisted evidence records and return a versioned digest.",
+        "description": "Deterministic, read-only operation that verifies a receipt by re-deriving evidence from persisted payment attempt, settlement, transaction, and ledger records. Returns field-level consistency results and a reproducible digest.\n\nThe digest is computed using canonical evidence encoding (SHA-256) with fixed field order, no insignificant whitespace, UTF-8 encoding, decimal amounts as strings, timestamps in ISO 8601 format, and explicit null handling.\n\nPending receipts are never verified. Incomplete or conflicting evidence fails closed. Missing evidence (transaction hash or ledger) for finalized receipts results in not-verified status.\n\n**Important:** The digest is an integrity aid and does NOT replace Stellar ledger verification. Receivers who need ledger-level assurance must verify against the Stellar ledger.",
+        "tags": ["facilitator"],
+        "parameters": [
+          {
+            "name": "receiptId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verification completed. Check 'verified' field to determine result.",
+            "headers": {
+              "x-correlation-id": {
+                "description": "Correlation ID from the receipt.",
+                "schema": { "type": "string" }
+              },
+              "x-ratelimit-limit": {
+                "description": "Maximum number of requests allowed in the current rate limit window.",
+                "schema": { "type": "integer" }
+              },
+              "x-ratelimit-remaining": {
+                "description": "Number of requests remaining in the current rate limit window. Zero means limit reached.",
+                "schema": { "type": "integer" }
+              },
+              "x-ratelimit-reset": {
+                "description": "ISO 8601 timestamp when the current rate limit window resets.",
+                "schema": { "type": "string", "format": "date-time" }
+              },
+              "retry-after": {
+                "description": "Number of seconds to wait before retrying. Only present in 429 responses. Per RFC 6585.",
+                "schema": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["verified", "receiptStatus", "fields"],
+                  "properties": {
+                    "verified": {
+                      "type": "boolean",
+                      "description": "Overall verification result. True only if all evidence matches and receipt is finalized."
+                    },
+                    "digest": {
+                      "type": "object",
+                      "description": "Versioned digest (present only if verified and finalized). Third parties can reproduce this digest by applying canonical encoding to the same evidence.",
+                      "required": ["value", "version", "algorithm"],
+                      "properties": {
+                        "value": {
+                          "type": "string",
+                          "description": "Hex-encoded SHA-256 digest of canonical evidence.",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "version": {
+                          "type": "string",
+                          "enum": ["1.0"],
+                          "description": "Encoding version for reproducible digest computation."
+                        },
+                        "algorithm": {
+                          "type": "string",
+                          "enum": ["SHA-256"],
+                          "description": "Hash algorithm used for digest."
+                        }
+                      }
+                    },
+                    "receiptStatus": {
+                      "type": "string",
+                      "enum": ["pending", "finalized"],
+                      "description": "Receipt lifecycle status."
+                    },
+                    "settlementState": {
+                      "type": "string",
+                      "enum": ["pending", "reconciled", "not_required", "needs_review"],
+                      "description": "Settlement reconciliation state (if settlement exists)."
+                    },
+                    "fields": {
+                      "type": "array",
+                      "description": "Field-level verification results. Each field compared between stored receipt and re-derived values.",
+                      "items": {
+                        "type": "object",
+                        "required": ["field", "status"],
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "description": "Field name (e.g., 'transactionHash', 'amount', 'ledger', 'digest')."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": ["match", "mismatch", "missing"],
+                            "description": "Field verification status: match (field matches derived value), mismatch (field differs from derived value), missing (required field absent)."
+                          },
+                          "reason": {
+                            "type": "string",
+                            "description": "Human-readable explanation of field status."
+                          }
+                        }
+                      }
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "no_settlement",
+                        "incomplete_evidence",
+                        "field_mismatch",
+                        "pending_receipt",
+                        "unsupported_network",
+                        "evidence_hash_invalid",
+                        "authorization_failed",
+                        "not_found"
+                      ],
+                      "description": "Reason code if not verified. Absent if verified=true."
+                    },
+                    "reasonMessage": {
+                      "type": "string",
+                      "description": "Human-readable reason if not verified. Absent if verified=true."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Receipt not found.",
+            "headers": {
+              "x-ratelimit-limit": {
+                "description": "Maximum number of requests allowed in the current rate limit window.",
+                "schema": { "type": "integer" }
+              },
+              "x-ratelimit-remaining": {
+                "description": "Number of requests remaining in the current rate limit window. Zero means limit reached.",
+                "schema": { "type": "integer" }
+              },
+              "x-ratelimit-reset": {
+                "description": "ISO 8601 timestamp when the current rate limit window resets.",
+                "schema": { "type": "string", "format": "date-time" }
+              },
+              "retry-after": {
+                "description": "Number of seconds to wait before retrying. Only present in 429 responses. Per RFC 6585.",
+                "schema": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok", "error"],
+                  "properties": {
+                    "ok": { "type": "boolean", "enum": [false] },
+                    "error": {
+                      "type": "object",
+                      "required": ["code", "message"],
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "details": { "type": "object", "additionalProperties": true }
+                      }
+                    },
+                    "requestId": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded. The client must wait before retrying. See Retry-After header.",
+            "headers": {
+              "x-ratelimit-limit": {
+                "description": "Maximum number of requests allowed in the current rate limit window.",
+                "schema": { "type": "integer" }
+              },
+              "x-ratelimit-remaining": {
+                "description": "Number of requests remaining in the current rate limit window. Zero means limit reached.",
+                "schema": { "type": "integer" }
+              },
+              "x-ratelimit-reset": {
+                "description": "ISO 8601 timestamp when the current rate limit window resets.",
+                "schema": { "type": "string", "format": "date-time" }
+              },
+              "retry-after": {
+                "description": "Number of seconds to wait before retrying. Only present in 429 responses. Per RFC 6585.",
+                "schema": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok", "error"],
+                  "properties": {
+                    "ok": { "type": "boolean", "enum": [false] },
+                    "error": {
+                      "type": "object",
+                      "required": ["code", "message"],
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "details": { "type": "object", "additionalProperties": true }
+                      }
+                    },
+                    "requestId": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error response",
+            "headers": {
+              "x-ratelimit-limit": {
+                "description": "Maximum number of requests allowed in the current rate limit window.",
+                "schema": { "type": "integer" }
+              },
+              "x-ratelimit-remaining": {
+                "description": "Number of requests remaining in the current rate limit window. Zero means limit reached.",
+                "schema": { "type": "integer" }
+              },
+              "x-ratelimit-reset": {
+                "description": "ISO 8601 timestamp when the current rate limit window resets.",
+                "schema": { "type": "string", "format": "date-time" }
+              },
+              "retry-after": {
+                "description": "Number of seconds to wait before retrying. Only present in 429 responses. Per RFC 6585.",
+                "schema": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok", "error"],
+                  "properties": {
+                    "ok": { "type": "boolean", "enum": [false] },
+                    "error": {
+                      "type": "object",
+                      "required": ["code", "message"],
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "details": { "type": "object", "additionalProperties": true }
+                      }
+                    },
+                    "requestId": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/receipts/{receiptId}/stream-access": {
       "post": {
         "operationId": "createReceiptStreamAccessGrant",
